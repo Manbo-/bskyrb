@@ -16,42 +16,36 @@ require "xrpc"
 
 module Bskyrb
   module PostTools
+    MENTION_PATTERN = /(^|\s|\()(@)([a-zA-Z0-9.-]+)(\b)/
+    LINK_PATTERN = URI.regexp(['http', 'https'])
+    HASHTAG_PATTERN = /\#[^\s]+/
+
     def create_facets(text)
       facets = []
 
-      # Regex patterns
-      mention_pattern = /(^|\s|\()(@)([a-zA-Z0-9.-]+)(\b)/
-      link_pattern = URI.regexp
+      facets += mention_facets(text)
+      facets += link_facets(text)
+      facets += hashtag_facets(text)
 
-      # Find mentions
-      text.enum_for(:scan, mention_pattern).each do |m|
-        index_start = Regexp.last_match.offset(0).first
-        index_end = Regexp.last_match.offset(0).last
-        did = resolve_handle(@pds, (m.join("").strip)[1..-1])["did"]
-        unless did.nil?
-          facets.push(
-            "$type" => "app.bsky.richtext.facet",
-            "index" => {
-              "byteStart" => index_start,
-              "byteEnd" => index_end,
-            },
-            "features" => [
-              {
-                "did" => did, # this is the matched mention
-                "$type" => "app.bsky.richtext.facet#mention",
-              },
-            ],
-          )
-        end
+      facets.empty? ? nil : facets
+    end
+
+    private
+
+    def scan(text, pattern)
+      text.enum_for(:scan, pattern).map do |match|
+        index_start = Regexp.last_match.byteoffset(0).first
+        index_end = Regexp.last_match.byteoffset(0).last
+        [index_start, index_end, match]
       end
+    end
 
-      # Find links
-      text.enum_for(:scan, link_pattern).each do |m|
-        index_start = Regexp.last_match.offset(0).first
-        index_end = Regexp.last_match.offset(0).last
-        m.compact!
-        path = "#{m[1]}#{m[2..-1].join("")}".strip
-        facets.push(
+    def mention_facets(text)
+      scan(text, MENTION_PATTERN).map do |index_start, index_end, match|
+        did = resolve_handle(@pds, (match.join("").strip)[1..-1])["did"]
+        next if did.nil?
+
+        {
           "$type" => "app.bsky.richtext.facet",
           "index" => {
             "byteStart" => index_start,
@@ -59,14 +53,51 @@ module Bskyrb
           },
           "features" => [
             {
-              "uri" => URI.parse("#{m[0]}://#{path}/").normalize.to_s, # this is the matched link
+              "did" => did, # this is the matched mention
+              "$type" => "app.bsky.richtext.facet#mention",
+            },
+          ],
+        }
+      end.compact
+    end
+
+    def link_facets(text)
+      scan(text, LINK_PATTERN).map do |index_start, index_end, match|
+        match.compact!
+        schema = match[0]
+        path = "#{match[1]}#{match[2..-1].join("")}".strip
+        {
+          "$type" => "app.bsky.richtext.facet",
+          "index" => {
+            "byteStart" => index_start,
+            "byteEnd" => index_end,
+          },
+          "features" => [
+            {
+              "uri" => URI.parse("#{schema}://#{path}/").normalize.to_s, # this is the matched link
               "$type" => "app.bsky.richtext.facet#link",
             },
           ],
-        )
+        }
       end
+    end
 
-      facets.empty? ? nil : facets
+    def hashtag_facets(text)
+      scan(text, HASHTAG_PATTERN).map do |index_start, index_end, match|
+        {
+          "$type" => "app.bsky.richtext.facet",
+          "index" => {
+            "byteStart" => index_start,
+            "byteEnd" => index_end,
+          },
+          "features" => [
+            {
+              "tag" => match,
+              "$type" => "app.bsky.richtext.facet#tag",
+            },
+          ],
+        }
+      end
     end
   end
 end
@@ -92,7 +123,7 @@ module Bskyrb
       }
     end
 
-    def create_facets!()
+    def create_facets!
       @facets = create_facets(@text)
     end
   end
