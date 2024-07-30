@@ -79,6 +79,31 @@ module Bskyrb
       create_post_or_reply(text, reply_to)
     end
 
+    def create_post_with_image(text, blobs, alt)
+      blobs = Array(blobs)
+      input = {
+        "collection" => "app.bsky.feed.post",
+        "$type" => "app.bsky.feed.post",
+        "repo" => session.did,
+        "record" => {
+          "$type" => "app.bsky.feed.post",
+          "createdAt" => DateTime.now.iso8601(3),
+          "text" => text,
+          "facets": create_facets(text),
+          "embed": {
+            "$type": "app.bsky.embed.images",
+            "images": blobs.map do |blob|
+              {
+                "alt": alt,
+                "image": blob["blob"]
+              }
+            end
+          }
+        }
+      }
+      create_record(input)
+    end
+
     def profile_action(username, type)
       input = Bskyrb::ComAtprotoRepoCreaterecord::CreateRecord::Input.from_hash({
         "collection" => type,
